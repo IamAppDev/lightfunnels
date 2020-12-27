@@ -59,7 +59,6 @@ images.belongsToMany(products, { through: products_images });
 	} catch (error) {
 		console.error('Unable to connect to the database:', error);
 	}
-
 	axios.get('https://www.aliexpress.com/item/4001150025635.html').then((res) => {
 		let data = res.data;
 		let d = data.substring(data.indexOf('data: '), data.indexOf('csrfToken'));
@@ -67,6 +66,22 @@ images.belongsToMany(products, { through: products_images });
 
 		const title = pureData.pageModule.title;
 		const url = pureData.pageModule.imagePath;
+		// console.log(pureData.skuModule.productSKUPropertyList[0].skuPropertyValues);
+		let variantsData = pureData.skuModule.productSKUPropertyList[0].skuPropertyValues.map((element) => {
+			return {
+				title: element.propertyValueDefinitionName,
+				id: element.propertyValueId,
+				imageUrl: element.skuPropertyImagePath
+			};
+		});
+		variantsData = variantsData.map((variant) => {
+			return {
+				...variant,
+				price: pureData.skuModule.skuPriceList.find(
+					(e) => variant.id.toString() === e.skuAttr.substring(e.skuAttr.indexOf(':') + 1, e.skuAttr.indexOf('#'))
+				).skuVal.actSkuCalPrice
+			};
+		});
 
 		(async function go() {
 			const transaction = await sequelize.transaction();
@@ -80,6 +95,19 @@ images.belongsToMany(products, { through: products_images });
 					},
 					{ transaction }
 				);
+				const imagesData = await images.bulkCreate(
+					variantsData.map((variant) => {
+						return { url: variant.imageUrl };
+					}),
+					{ transaction }
+				);
+				for (let variant of variantsData) {
+					await variants.create({
+						title: variant.title,
+						price: variant.price,
+						imageId: imagesData.find(e => e.url === variant.imageUrl).id,
+					}, {transaction});
+				}
 
 				await transaction.commit();
 			} catch (err) {
